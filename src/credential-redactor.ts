@@ -2,11 +2,42 @@ import { Transform, TransformCallback } from 'stream';
 
 const MAX_PENDING_CHARS = 32 * 1024;
 const OVERLAP_CHARS = 8 * 1024;
+const PREFIX_TAIL_WINDOW_CHARS = 16 * 1024;
+const CREDENTIAL_PREFIXES = ['github_pat_', 'ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'eyJ'];
 
 const CREDENTIAL_PATTERNS = [
   /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g,
-  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?![A-Za-z0-9_-])/g,
 ];
+
+function trailingCredentialPrefixStart(value: string, safeLength: number): number {
+  const windowStart = Math.max(0, safeLength - PREFIX_TAIL_WINDOW_CHARS);
+  const windowText = value.slice(windowStart, safeLength);
+
+  // Hold back any in-progress JWT or GitHub token that crosses safeLength.
+  const jwtIdx = windowText.lastIndexOf('eyJ');
+  if (
+    jwtIdx >= 0 &&
+    (jwtIdx === 0 || !/\w/.test(windowText[jwtIdx - 1])) &&
+    /^[A-Za-z0-9_.-]*$/.test(windowText.slice(jwtIdx))
+  ) {
+    return windowStart + jwtIdx;
+  }
+
+  let wordStart = safeLength;
+  while (wordStart > windowStart && /\w/.test(value[wordStart - 1])) {
+    wordStart -= 1;
+  }
+  const trailingWord = value.slice(wordStart, safeLength);
+  if (
+    trailingWord.length > 0 &&
+    (/^(?:gh[pousr]|github_pat)_/.test(trailingWord) ||
+      CREDENTIAL_PREFIXES.some((prefix) => prefix.startsWith(trailingWord)))
+  ) {
+    return wordStart;
+  }
+  return safeLength;
+}
 
 function fixedLengthMask(value: string): string {
   const marker = '[REDACTED_CREDENTIAL]';
@@ -56,7 +87,7 @@ export class CredentialRedactingStream extends Transform {
         }
       }
     }
-    return safeLength;
+    return trailingCredentialPrefixStart(value, safeLength);
   }
 
   override _transform(chunk: Buffer | string, encoding: BufferEncoding, callback: TransformCallback): void {

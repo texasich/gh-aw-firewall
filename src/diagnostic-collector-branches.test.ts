@@ -72,4 +72,26 @@ describe('collectDiagnosticLogs – uncovered branches', () => {
     const diagnosticsDir = path.join(tmpDir, 'diagnostics');
     expect(fs.existsSync(path.join(diagnosticsDir, 'docker-compose.yml'))).toBe(false);
   });
+
+  it('redacts credentials in captured container diagnostic logs', async () => {
+    const secretToken = `ghs_${'z'.repeat(36)}`;
+    const secretJwt = `eyJ${'a'.repeat(16)}.${'b'.repeat(16)}.${'c'.repeat(16)}-`;
+    mockExecaFn.mockImplementation(async (_cmd: string, args: string[]) => {
+      if (args[0] === 'logs') {
+        return {
+          stdout: `Authorization: Bearer ${secretToken}`,
+          stderr: `token=${secretJwt}`,
+          exitCode: 0,
+        };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    await collectDiagnosticLogs(tmpDir);
+
+    const logContent = actual.readFileSync(path.join(tmpDir, 'diagnostics', 'awf-agent.log'), 'utf8');
+    expect(logContent).not.toContain(secretToken);
+    expect(logContent).not.toContain(secretJwt);
+    expect(logContent).toContain('[REDACTED_CREDENTIAL]');
+  });
 });

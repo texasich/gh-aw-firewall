@@ -10,6 +10,7 @@ import {
 } from './constants';
 import { getLocalDockerEnv } from './docker-host';
 import { sanitizeDockerComposeYaml } from './compose-sanitizer';
+import { redactCredentials } from './credential-redactor';
 
 /**
  * Collects diagnostic logs from AWF containers on failure.
@@ -56,7 +57,7 @@ export async function collectDiagnosticLogs(workDir: string): Promise<void> {
       if (result.exitCode === 0) {
         const combined = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
         if (combined) {
-          fs.writeFileSync(path.join(diagnosticsDir, `${container}.log`), combined + '\n');
+          fs.writeFileSync(path.join(diagnosticsDir, `${container}.log`), redactCredentials(combined).output + '\n');
         }
       }
     } catch {

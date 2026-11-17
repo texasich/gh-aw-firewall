@@ -113,4 +113,31 @@ describe('credential redaction', () => {
       detected: false,
     });
   });
+
+  it('redacts base64url JWT signatures ending with hyphens', () => {
+    const shortJwtWithHyphen = `eyJ${'a'.repeat(12)}.${'b'.repeat(12)}.${'c'.repeat(9)}-`;
+    const longJwtWithHyphen = `eyJ${'a'.repeat(20)}.${'b'.repeat(20)}.${'c'.repeat(20)}-`;
+    for (const jwtWithHyphen of [shortJwtWithHyphen, longJwtWithHyphen]) {
+      const result = redactCredentials(`Authorization: Bearer ${jwtWithHyphen} ok`);
+
+      expect(result.detected).toBe(true);
+      expect(result.output).not.toContain(jwtWithHyphen);
+      expect(result.output).not.toContain('- ok');
+      expect(result.output).toContain('[REDACTED_CREDENTIAL]');
+      expect(result.output.endsWith(' ok')).toBe(true);
+    }
+  });
+
+  it('holds partial token prefixes across bounded stream flushes', async () => {
+    const longJwt = `eyJ${'a'.repeat(40)}.${'b'.repeat(9_000)}.${'c'.repeat(40)}-`;
+    const prefix = `${'x'.repeat(24_569)} `;
+    // Chunk 1 exceeds MAX_PENDING_CHARS (32 KiB) without a newline while the JWT is still incomplete.
+    const splitAt = prefix.length + 8_250;
+    const combined = `${prefix}${longJwt}\n`;
+
+    const result = await runStream([combined.slice(0, splitAt), combined.slice(splitAt)]);
+    expect(result.detections).toBe(1);
+    expect(result.output).not.toContain('eyJ');
+    expect(result.output).toContain('[REDACTED_CREDENTIAL]');
+  });
 });
